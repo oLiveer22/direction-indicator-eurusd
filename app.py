@@ -203,9 +203,10 @@ for tab, g in zip(tabs, groups):
             view = build_view(rel, base, st.session_state[f"fc_{name}"])
             st.session_state[f"view_{name}"] = view
             st.markdown(f"**{name}** ({rel.unit})")
-            st.data_editor(
+                       st.data_editor(
                 view, hide_index=True, width="stretch", key=f"ed_{name}",
                 on_change=on_edit, args=(name,),
+                column_order=["Period", "Actual", "Forecast", "Result", "EURUSD effect"],
                 disabled=["Period", "Actual", "Surprise", "Result", "EURUSD effect"],
                 column_config={
                     "Period": st.column_config.TextColumn(alignment="center"),
