@@ -18,6 +18,11 @@ def get_data(api_key: str):
     return core.load_all(api_key)
 
 
+@st.cache_data(ttl=3600, show_spinner="Loading release dates…")
+def get_vintages(api_key: str):
+    return core.load_vintages(api_key)
+
+
 def load_forecasts() -> pd.DataFrame:
     try:
         df = pd.read_csv(FORECASTS_FILE, dtype={"indicator": str, "period": str})
@@ -89,6 +94,8 @@ if not api_key:
     st.stop()
 
 raw, errors = get_data(api_key)
+vint, vint_errors = get_vintages(api_key)
+errors = {**errors, **vint_errors}
 tone = core.tone_impact(fed_tone, fed_dur, ecb_tone, ecb_dur)
 out = core.compute(raw, bw, tone)
 total = out["total"]
@@ -122,7 +129,7 @@ for c, b in zip(cols, core.BLOCKS):
 # ───────────── data releases ─────────────
 st.subheader("Data Releases")
 
-releases = core.build_releases(raw)
+releases = core.build_releases(raw, vint)
 forecasts = load_forecasts()
 since = pd.Timestamp.today().normalize() - pd.DateOffset(months=window)
 
@@ -202,14 +209,14 @@ for tab, g in zip(tabs, groups):
                 st.session_state[f"fc_{name}"] = {r.Period: r.Forecast for r in base.itertuples() if pd.notna(r.Forecast)}
             view = build_view(rel, base, st.session_state[f"fc_{name}"])
             st.session_state[f"view_{name}"] = view
-            st.markdown(f"**{name}** ({rel.unit})")
+            st.markdown(f"<span style='color:{NAVY};font-weight:700'>{name}</span> ({rel.unit})", unsafe_allow_html=True)
             st.data_editor(
                 view, hide_index=True, width="stretch", key=f"ed_{name}",
                 on_change=on_edit, args=(name,),
-                column_order=["Period", "Actual", "Forecast", "Result", "EURUSD effect"],
-                disabled=["Period", "Actual", "Surprise", "Result", "EURUSD effect"],
+                column_order=["Release", "Actual", "Forecast", "Result", "EURUSD effect"],
+                disabled=["Release", "Actual", "Surprise", "Result", "EURUSD effect"],
                 column_config={
-                    "Period": st.column_config.TextColumn(alignment="center"),
+                    "Release": st.column_config.TextColumn("Release (period)", alignment="center"),
                     "Actual": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center"),
                     "Forecast": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center", help="Type the consensus forecast"),
                     "Surprise": st.column_config.TextColumn(alignment="center"),

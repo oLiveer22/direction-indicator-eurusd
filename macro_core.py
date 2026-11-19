@@ -99,6 +99,78 @@ def load_all(api_key: str) -> tuple[dict, dict]:
 
 
 # ───────────────────────── series helpers ─────────────────────────
+# ───────────────────────── FRED vintages: first-print values and release dates ─────────────────────────
+VINT_START = "2022-01-01"
+FAR = pd.Timestamp("2200-01-01")
+# release name -> (candidate FRED ids in order of preference, transform applied to the first print)
+VINT_SPECS = {
+    "US CPI y/y": (["CPIAUCNS", "CPIAUCSL"], "yoy12"),
+    "US core CPI y/y": (["CPILFENS", "CPILFESL"], "yoy12"),
+    "US PCE y/y": (["PCEPI"], "yoy12"),
+    "US core PCE y/y": (["PCEPILFE"], "yoy12"),
+    "US nonfarm payrolls (monthly change)": (["PAYEMS"], "diff1"),
+    "US unemployment rate": (["UNRATE"], "level"),
+    "US GDP q/q annualized": (["GDPC1"], "qoq"),
+    "US GDP y/y": (["GDPC1"], "yoy12"),
+}
+VINT_IDS = sorted({i for ids, _ in VINT_SPECS.values() for i in ids})
+
+
+def fetch_fred_vintages(series_id: str, api_key: str, start: str = VINT_START) -> pd.DataFrame:
+    """All vintages of a series: one row per (reference date, period in which that value was valid)."""
+    r = requests.get(
+        FRED_URL,
+        params=dict(series_id=series_id, api_key=api_key, file_type="json", observation_start=start,
+                    realtime_start="1990-01-01", realtime_end="9999-12-31", limit=100000),
+        timeout=40,
+    )
+    r.raise_for_status()
+    df = pd.DataFrame(r.json()["observations"])
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["value"]).copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["rt_start"] = pd.to_datetime(df["realtime_start"])
+    df["rt_end"] = pd.to_datetime(df["realtime_end"], errors="coerce").fillna(FAR)
+    return df[["date", "rt_start", "rt_end", "value"]].reset_index(drop=True)
+
+
+def load_vintages(api_key: str) -> tuple[dict, dict]:
+    out, errors = {}, {}
+    for sid in VINT_IDS:
+        try:
+            out[sid] = fetch_fred_vintages(sid, api_key)
+        except Exception as e:  # noqa: BLE001
+            errors["vintage " + sid] = f"{type(e).__name__}: {e}"[:160]
+    return out, errors
+
+
+def _asof(v: pd.DataFrame, d: pd.Timestamp, p: pd.Timestamp) -> float:
+    m = v[(v["date"] == d) & (v["rt_start"] <= p) & (v["rt_end"] > p)]
+    return float(m["value"].iloc[-1]) if len(m) else np.nan
+
+
+def first_print_series(v: pd.DataFrame, kind: str) -> tuple[pd.Series, pd.Series]:
+    """Value as first published (transform computed with the data available on release day) and its release date."""
+    vals, pubs = {}, {}
+    for d, p in v.groupby("date")["rt_start"].min().items():
+        cur = _asof(v, d, p)
+        if kind == "level":
+            x = cur
+        elif kind == "yoy12":
+            x = (cur / _asof(v, d - pd.DateOffset(months=12), p) - 1) * 100
+        elif kind == "diff1":
+            x = cur - _asof(v, d - pd.DateOffset(months=1), p)
+        elif kind == "qoq":
+            x = ((cur / _asof(v, d - pd.DateOffset(months=3), p)) ** 4 - 1) * 100
+        else:
+            raise ValueError(kind)
+        vals[d], pubs[d] = x, p
+    val = pd.Series(vals, dtype="float64").sort_index()
+    pub = pd.Series(pubs).sort_index()
+    ok = val.replace([np.inf, -np.inf], np.nan).dropna().index
+    return val.loc[ok], pub.loc[ok]
+
+
 def diff_daily(a: pd.Series, b: pd.Series) -> pd.Series:
     df = pd.concat([a.rename("a"), b.rename("b")], axis=1).sort_index().ffill().dropna()
     return df["a"] - df["b"]
@@ -259,14 +331,16 @@ class Release:
     decimals: int
     freq: str        # "M" or "Q"
     eur_sign: int    # effect on EURUSD if the release comes ABOVE forecast (+1 up, -1 down)
+    pub: pd.Series | None = None   # first-publication date per reference period (US only, from FRED vintages)
 
 
 def _qoq_annualized(s: pd.Series) -> pd.Series:
     return (((s.pct_change() + 1) ** 4 - 1) * 100).dropna()
 
 
-def build_releases(raw: dict) -> list[Release]:
+def build_releases(raw: dict, vint: dict | None = None) -> list[Release]:
     out: list[Release] = []
+    vint = vint or {}
 
     def add(name, group, build, needs, unit, dec, freq, sign):
         if any(k not in raw for k in needs):
@@ -277,6 +351,42 @@ def build_releases(raw: dict) -> list[Release]:
             return
         if len(s):
             out.append(Release(name, group, s, unit, dec, freq, sign))
+
+    def add_us(name, group, unit, dec, freq, sign):
+        """US release from FRED vintages: first-printed values + publication dates."""
+        ids, kind = VINT_SPECS[name]
+        for sid in ids:
+            if sid in vint and len(vint[sid]):
+                try:
+                    val, pub = first_print_series(vint[sid], kind)
+                except Exception:  # noqa: BLE001
+                    continue
+                val = val.round(dec)
+                if len(val):
+                    out.append(Release(name, group, val, unit, dec, freq, sign, pub.loc[val.index]))
+                    return True
+        return False
+
+    _done = set()
+    for _n, _g, _u, _d, _f, _s in [
+        ("US CPI y/y", "US inflation", "%", 1, "M", -1),
+        ("US core CPI y/y", "US inflation", "%", 1, "M", -1),
+        ("US PCE y/y", "US inflation", "%", 1, "M", -1),
+        ("US core PCE y/y", "US inflation", "%", 1, "M", -1),
+        ("US nonfarm payrolls (monthly change)", "US labor", "k", 0, "M", -1),
+        ("US unemployment rate", "US labor", "%", 1, "M", +1),
+        ("US GDP q/q annualized", "GDP", "%", 1, "Q", -1),
+        ("US GDP y/y", "GDP", "%", 1, "Q", -1),
+    ]:
+        if add_us(_n, _g, _u, _d, _f, _s):
+            _done.add(_n)
+
+    _add = add
+
+    def add(name, group, build, needs, unit, dec, freq, sign):  # noqa: F811
+        if name in _done:
+            return
+        _add(name, group, build, needs, unit, dec, freq, sign)
 
     add("US CPI y/y", "US inflation", lambda: yoy(raw["CPIAUCSL"], 12), ["CPIAUCSL"], "%", 1, "M", -1)
     add("US core CPI y/y", "US inflation", lambda: yoy(raw["CPILFESL"], 12), ["CPILFESL"], "%", 1, "M", -1)
@@ -298,11 +408,23 @@ def period_label(ts: pd.Timestamp, freq: str) -> str:
     return f"{p.year}-Q{p.quarter}" if freq == "Q" else f"{p.year}-{p.month:02d}"
 
 
+_MES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def release_label(ts: pd.Timestamp, pub, freq: str) -> str:
+    """'25.11.2026 (Oct)' = release date (reference period)."""
+    ref = f"Q{pd.Period(ts, freq='Q').quarter}" if freq == "Q" else _MES[ts.month - 1]
+    if pub is None or pd.isna(pub):
+        return f"– ({ref})"
+    return f"{pub:%d.%m.%Y} ({ref})"
+
+
 def release_table(rel: Release, n: int, forecasts: pd.DataFrame | None = None) -> pd.DataFrame:
     """Last n releases: Period, Actual, Previous, Forecast (from forecasts.csv when present)."""
     s = rel.series
     df = pd.DataFrame({"Actual": s, "Previous": s.shift(1)}).tail(n)
     df.insert(0, "Period", [period_label(i, rel.freq) for i in df.index])
+    df.insert(1, "Release", [release_label(i, rel.pub.get(i) if rel.pub is not None else None, rel.freq) for i in df.index])
     df["Forecast"] = np.nan
     if forecasts is not None and len(forecasts):
         f = forecasts[forecasts["indicator"] == rel.name].set_index("period")["forecast"]
