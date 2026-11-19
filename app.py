@@ -167,7 +167,7 @@ for tab, g in zip(tabs, groups):
                 c2.markdown("**GDP growth, q/q % (US annualized)**")
                 c2.bar_chart(series_frame(qq))
 
-                     # one editable table per indicator: Period, Actual, Forecast, Surprise, Result, EURUSD effect
+                     # one editable table per indicator: Period, Actual, Forecast, Result, EURUSD effect
         def build_view(rel, base, fc):
             t = base.drop(columns=["Previous"]).copy()
             t["Forecast"] = t["Period"].map(fc).astype("float64")
@@ -203,7 +203,7 @@ for tab, g in zip(tabs, groups):
             view = build_view(rel, base, st.session_state[f"fc_{name}"])
             st.session_state[f"view_{name}"] = view
             st.markdown(f"**{name}** ({rel.unit})")
-                       st.data_editor(
+            st.data_editor(
                 view, hide_index=True, width="stretch", key=f"ed_{name}",
                 on_change=on_edit, args=(name,),
                 column_order=["Period", "Actual", "Forecast", "Result", "EURUSD effect"],
