@@ -167,7 +167,7 @@ for tab, g in zip(tabs, groups):
                 c2.markdown("**GDP growth, q/q % (US annualized)**")
                 c2.bar_chart(series_frame(qq))
 
-        # actual / previous / forecast tables
+                # actual / forecast tables
         for rel in rels:
             n = window if rel.freq == "M" else window // 3
             tbl = core.release_table(rel, n, forecasts)
@@ -175,6 +175,7 @@ for tab, g in zip(tabs, groups):
             edited = st.data_editor(
                 tbl, hide_index=True, width="stretch", key=f"ed_{rel.name}",
                 disabled=["Period", "Actual", "Previous"],
+                column_order=["Period", "Actual", "Forecast"],
                 column_config={
                     "Actual": st.column_config.NumberColumn(format=f"%.{rel.decimals}f"),
                     "Previous": st.column_config.NumberColumn(format=f"%.{rel.decimals}f"),
