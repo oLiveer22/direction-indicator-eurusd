@@ -167,25 +167,55 @@ for tab, g in zip(tabs, groups):
                 c2.markdown("**GDP growth, q/q % (US annualized)**")
                 c2.bar_chart(series_frame(qq))
 
-               # actual / forecast tables
+                     # one editable table per indicator: Period, Actual, Forecast, Surprise, Result, EURUSD effect
+        def build_view(rel, base, fc):
+            t = base.drop(columns=["Previous"]).copy()
+            t["Forecast"] = t["Period"].map(fc).astype("float64")
+            s = core.surprise_table(rel, t)
+            if len(s):
+                s = s.set_index("Period")
+                t["Surprise"] = [(f"{s.loc[p, 'Surprise']:+.{rel.decimals}f}" if s.loc[p, "Surprise"] != 0 else f"{0:.{rel.decimals}f}") if p in s.index else "" for p in t["Period"]]
+                t["Result"] = [s.loc[p, "Result"] if p in s.index else "" for p in t["Period"]]
+                t["EURUSD effect"] = [s.loc[p, "Typical EURUSD effect"] if p in s.index else "" for p in t["Period"]]
+            else:
+                t["Surprise"], t["Result"], t["EURUSD effect"] = "", "", ""
+            return t
+
+        def on_edit(name):
+            view = st.session_state[f"view_{name}"]
+            edits = st.session_state[f"ed_{name}"].get("edited_rows", {})
+            fc = st.session_state[f"fc_{name}"]
+            for i, ch in edits.items():
+                if "Forecast" in ch:
+                    p = view["Period"].iloc[int(i)]
+                    v = ch["Forecast"]
+                    if v is None or (isinstance(v, float) and np.isnan(v)):
+                        fc.pop(p, None)
+                    else:
+                        fc[p] = float(v)
+
         for rel in rels:
             n = window if rel.freq == "M" else window // 3
-            tbl = core.release_table(rel, n, forecasts)
-            st.markdown(f"**{rel.name}** ({rel.unit})")
-            edited = st.data_editor(
-                tbl, hide_index=True, width="stretch", key=f"ed_{rel.name}",
-                disabled=["Period", "Actual", "Previous"],
-                column_order=["Period", "Actual", "Forecast"],
+            base = core.release_table(rel, n, forecasts)
+            name = rel.name
+            if f"fc_{name}" not in st.session_state:
+                st.session_state[f"fc_{name}"] = {r.Period: r.Forecast for r in base.itertuples() if pd.notna(r.Forecast)}
+            view = build_view(rel, base, st.session_state[f"fc_{name}"])
+            st.session_state[f"view_{name}"] = view
+            st.markdown(f"**{name}** ({rel.unit})")
+            st.data_editor(
+                view, hide_index=True, width="stretch", key=f"ed_{name}",
+                on_change=on_edit, args=(name,),
+                disabled=["Period", "Actual", "Surprise", "Result", "EURUSD effect"],
                 column_config={
                     "Period": st.column_config.TextColumn(alignment="center"),
                     "Actual": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center"),
-                    "Previous": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center"),
                     "Forecast": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center", help="Type the consensus forecast"),
+                    "Surprise": st.column_config.TextColumn(alignment="center"),
+                    "Result": st.column_config.TextColumn(alignment="center"),
+                    "EURUSD effect": st.column_config.TextColumn(alignment="center"),
                 },
             )
-            sur = core.surprise_table(rel, edited)
-            if len(sur):
-                st.dataframe(sur, hide_index=True, width="stretch")
 
 # ───────────── details of the score ─────────────
 st.subheader("Score details")
