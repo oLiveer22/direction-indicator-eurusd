@@ -120,10 +120,7 @@ for c, b in zip(cols, core.BLOCKS):
     c.metric(b, "info" if sc is None else f"{sc * 100:+.0f}", f"weight {bw[b]}%", delta_color="off")
 
 # ───────────── data releases ─────────────
-st.subheader("Data releases")
-st.caption("Actual values are the current vintage (revisions included), so they can differ slightly from the first print. "
-           "Free APIs do not provide consensus forecasts: type them in the Forecast column, or add them permanently to forecasts.csv in the repo "
-           "(columns: indicator, period, forecast).")
+st.subheader("Data Releases")
 
 releases = core.build_releases(raw)
 forecasts = load_forecasts()
