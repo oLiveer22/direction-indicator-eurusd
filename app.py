@@ -82,8 +82,7 @@ if st.sidebar.button("Refresh data"):
     st.rerun()
 
 # ───────────── data ─────────────
-st.title("EURUSD · Level 1 — Macro direction")
-st.caption("Rates, differentials, inflation, labor, growth and central bank tone. Daily/monthly data: no real-time feed needed here (real-time lives in the TradingView drivers panel).")
+st.title("EURUSD · Level 1 — Macro Direction Indicator")
 
 if not api_key:
     st.info("Enter your free FRED API key in the sidebar (or set FRED_API_KEY in Streamlit secrets) to load US data. Euro area data comes from the ECB and needs no key.")
