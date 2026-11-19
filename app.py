@@ -167,7 +167,7 @@ for tab, g in zip(tabs, groups):
                 c2.markdown("**GDP growth, q/q % (US annualized)**")
                 c2.bar_chart(series_frame(qq))
 
-                # actual / forecast tables
+               # actual / forecast tables
         for rel in rels:
             n = window if rel.freq == "M" else window // 3
             tbl = core.release_table(rel, n, forecasts)
@@ -177,9 +177,10 @@ for tab, g in zip(tabs, groups):
                 disabled=["Period", "Actual", "Previous"],
                 column_order=["Period", "Actual", "Forecast"],
                 column_config={
-                    "Actual": st.column_config.NumberColumn(format=f"%.{rel.decimals}f"),
-                    "Previous": st.column_config.NumberColumn(format=f"%.{rel.decimals}f"),
-                    "Forecast": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", help="Type the consensus forecast"),
+                    "Period": st.column_config.TextColumn(alignment="center"),
+                    "Actual": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center"),
+                    "Previous": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center"),
+                    "Forecast": st.column_config.NumberColumn(format=f"%.{rel.decimals}f", alignment="center", help="Type the consensus forecast"),
                 },
             )
             sur = core.surprise_table(rel, edited)
